@@ -91,13 +91,13 @@ export const MicButton: React.FC<MicButtonProps> = ({
       </div>
 
       {/* State label & subtext */}
-      <div className="mt-3 text-center">
-        <p className="text-sm font-semibold text-slate-800 flex items-center justify-center gap-1.5">
+      <div className="mt-2 text-center">
+        <p className="text-xs md:text-sm font-semibold text-slate-800 flex items-center justify-center gap-1.5">
           {state === 'listening' && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />}
           {state === 'speaking' && <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />}
           {stateLabel}
         </p>
-        <p className="text-xs text-slate-500 max-w-xs truncate mt-0.5">
+        <p className="text-[11px] text-slate-500 max-w-xs truncate mt-0.5">
           {stateHint}
         </p>
       </div>

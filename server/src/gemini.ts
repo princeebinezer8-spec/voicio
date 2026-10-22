@@ -5,11 +5,11 @@ import { VocabularyWord, DifficultyLevel } from './data/vocabulary.js';
 let aiClient: GoogleGenAI | null = null;
 let cachedKey: string | null = null;
 
-export function getAiClient(): GoogleGenAI {
-  if (!config.isGeminiConfigured) {
-    throw new Error('Gemini API key is not configured. Please add GEMINI_API_KEY to your server .env file.');
+export function getAiClient(apiKeyOverride?: string): GoogleGenAI {
+  const currentKey = apiKeyOverride || config.geminiApiKey;
+  if (!currentKey || currentKey.length < 5 || currentKey.includes('your_')) {
+    throw new Error('Gemini API key is not configured. Please add GEMINI_API_KEY in your configuration.');
   }
-  const currentKey = config.geminiApiKey!;
   if (!aiClient || cachedKey !== currentKey) {
     aiClient = new GoogleGenAI({ apiKey: currentKey });
     cachedKey = currentKey;
@@ -50,19 +50,25 @@ export interface DynamicQuiz {
 /**
  * Verify Gemini connection and model availability
  */
-export async function verifyGeminiConnection(): Promise<{ ok: boolean; model: string; message: string }> {
-  if (!config.isGeminiConfigured) {
+export async function verifyGeminiConnection(
+  apiKey?: string,
+  model?: string
+): Promise<{ ok: boolean; model: string; message: string }> {
+  const effectiveKey = apiKey || config.geminiApiKey;
+  const effectiveModel = model || config.geminiModel;
+
+  if (!effectiveKey || effectiveKey.length < 5 || effectiveKey.includes('your_')) {
     return {
       ok: false,
-      model: config.geminiModel,
+      model: effectiveModel,
       message: 'GEMINI_API_KEY is not set or is using a placeholder.',
     };
   }
 
   try {
-    const ai = getAiClient();
+    const ai = getAiClient(effectiveKey);
     const response = await ai.models.generateContent({
-      model: config.geminiModel,
+      model: effectiveModel,
       contents: 'Respond with exactly: "Voicio AI Tutor ready."',
       config: {
         maxOutputTokens: 20,
@@ -73,36 +79,13 @@ export async function verifyGeminiConnection(): Promise<{ ok: boolean; model: st
     const reply = response.text?.trim() || '';
     return {
       ok: true,
-      model: config.geminiModel,
+      model: effectiveModel,
       message: reply || 'Connected successfully to Gemini model.',
     };
   } catch (err: any) {
-    // If preferred model fails (e.g. 404 model not found), test fallback model
-    if (config.geminiModel !== 'gemini-2.0-flash' && err?.status === 404) {
-      try {
-        const ai = getAiClient();
-        await ai.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: 'Hello',
-          config: { maxOutputTokens: 10 },
-        });
-        return {
-          ok: true,
-          model: 'gemini-2.0-flash',
-          message: `Primary model ${config.geminiModel} was not accessible, but fallback gemini-2.0-flash is active.`,
-        };
-      } catch (fallbackErr: any) {
-        return {
-          ok: false,
-          model: config.geminiModel,
-          message: `Gemini API connection error: ${err?.message || 'Unknown error'}`,
-        };
-      }
-    }
-
     return {
       ok: false,
-      model: config.geminiModel,
+      model: effectiveModel,
       message: `Gemini API connection error: ${err?.message || 'Unknown error'}`,
     };
   }
@@ -113,9 +96,12 @@ export async function verifyGeminiConnection(): Promise<{ ok: boolean; model: st
  */
 export async function generateTutorReply(
   userMessage: string,
-  context: TutorContext
+  context: TutorContext,
+  apiKey?: string,
+  model?: string
 ): Promise<{ reply: string; model: string }> {
-  const ai = getAiClient();
+  const effectiveKey = apiKey || config.geminiApiKey;
+  const ai = getAiClient(effectiveKey);
   const word = context.currentWord;
   const level = context.level || 'Intermediate';
 
@@ -140,7 +126,8 @@ Pedagogical and voice guidelines:
 
   // Format past history for multi-turn context
   const contents = [];
-  const recentHistory = context.history.slice(-config.maxHistoryLength);
+  const maxHistory = config.maxHistoryLength || 12;
+  const recentHistory = context.history.slice(-maxHistory);
 
   for (const msg of recentHistory) {
     contents.push({
@@ -156,7 +143,7 @@ Pedagogical and voice guidelines:
   });
 
   let reply = '';
-  let usedModel = config.geminiModel;
+  let usedModel = model || config.geminiModel;
 
   try {
     const response = await ai.models.generateContent({
@@ -205,7 +192,9 @@ export async function evaluateStudentAnswer(
   targetWord: string,
   userAnswer: string,
   level: DifficultyLevel,
-  taskDescription: string = 'Use the word in a complete and natural sentence'
+  taskDescription: string = 'Use the word in a complete and natural sentence',
+  apiKey?: string,
+  model?: string
 ): Promise<SentenceEvaluation> {
   const trimmed = userAnswer.trim();
   if (!trimmed) {
@@ -227,7 +216,9 @@ export async function evaluateStudentAnswer(
     };
   }
 
-  const ai = getAiClient();
+  const effectiveKey = apiKey || config.geminiApiKey;
+  const effectiveModel = model || config.geminiModel;
+  const ai = getAiClient(effectiveKey);
 
   const prompt = `You are evaluating a student's English usage for the word "${targetWord}".
 Student level: ${level}
@@ -252,11 +243,11 @@ Respond ONLY with a valid JSON object matching this schema, with no markdown cod
 
   try {
     const response = await ai.models.generateContent({
-      model: config.geminiModel,
+      model: effectiveModel,
       contents: prompt,
       config: {
         temperature: 0.2,
-        maxOutputTokens: 400,
+        maxOutputTokens: 200,
       },
     });
 
@@ -292,9 +283,13 @@ Respond ONLY with a valid JSON object matching this schema, with no markdown cod
  */
 export async function generateVocabularyQuiz(
   word: VocabularyWord,
-  type: 'multiple-choice' | 'fill-in-the-blank' | 'synonym-match' = 'multiple-choice'
+  type: 'multiple-choice' | 'fill-in-the-blank' | 'synonym-match' = 'multiple-choice',
+  apiKey?: string,
+  model?: string
 ): Promise<DynamicQuiz> {
-  const ai = getAiClient();
+  const effectiveKey = apiKey || config.geminiApiKey;
+  const effectiveModel = model || config.geminiModel;
+  const ai = getAiClient(effectiveKey);
 
   const prompt = `Create a high-quality ${type} vocabulary quiz question for the English word "${word.word}" (${word.partOfSpeech}, level: ${word.level}).
 Definition: ${word.definition}
@@ -312,11 +307,11 @@ Return ONLY a valid JSON object matching this format without backticks or markdo
 
   try {
     const response = await ai.models.generateContent({
-      model: config.geminiModel,
+      model: effectiveModel,
       contents: prompt,
       config: {
         temperature: 0.3,
-        maxOutputTokens: 400,
+        maxOutputTokens: 200,
       },
     });
 

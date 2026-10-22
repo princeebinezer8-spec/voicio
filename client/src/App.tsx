@@ -282,7 +282,7 @@ export const App: React.FC = () => {
       />
 
       {/* Main Workspace Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-y-auto">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
         <Header
           currentTab={currentTab}
           selectedLevel={progress.selectedLevel}
@@ -292,7 +292,13 @@ export const App: React.FC = () => {
           onOpenSettings={() => setCurrentTab('settings')}
         />
 
-        <main className="flex-1 p-4 md:p-8">
+        <main
+          className={`flex-1 min-h-0 flex flex-col overflow-y-auto ${
+            currentTab === 'tutor'
+              ? 'p-2.5 sm:p-3 md:p-4 lg:p-6'
+              : 'p-4 md:p-8'
+          }`}
+        >
           {currentTab === 'home' && (
             <HomePage
               todayWord={currentWord}
