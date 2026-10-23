@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { config } from './config.js';
 import { VocabularyWord, DifficultyLevel } from './data/vocabulary.js';
+import { AppError, classifyError } from './errors.js';
 
 let aiClient: GoogleGenAI | null = null;
 let cachedKey: string | null = null;
@@ -8,7 +9,12 @@ let cachedKey: string | null = null;
 export function getAiClient(apiKeyOverride?: string): GoogleGenAI {
   const currentKey = apiKeyOverride || config.geminiApiKey;
   if (!currentKey || currentKey.length < 5 || currentKey.includes('your_')) {
-    throw new Error('Gemini API key is not configured. Please add GEMINI_API_KEY in your configuration.');
+    throw new AppError({
+      code: 'INVALID_CREDENTIALS',
+      message: 'Our AI tutor configuration is currently invalid. Please contact support or check server settings.',
+      statusCode: 401,
+      retryable: false,
+    });
   }
   if (!aiClient || cachedKey !== currentKey) {
     aiClient = new GoogleGenAI({ apiKey: currentKey });
@@ -27,6 +33,9 @@ export interface TutorContext {
   currentWord?: VocabularyWord;
   history: ChatMessage[];
   userName?: string;
+  previousWord?: VocabularyWord;
+  comparisonWord?: VocabularyWord;
+  transitionType?: string;
 }
 
 export interface SentenceEvaluation {
@@ -48,6 +57,59 @@ export interface DynamicQuiz {
 }
 
 /**
+ * Robust JSON extraction and validation helper for AI responses
+ */
+export function extractAndValidateJson<T>(rawText: string, validator: (parsed: any) => T | null): T {
+  if (!rawText || typeof rawText !== 'string') {
+    throw new AppError({
+      code: 'INVALID_AI_RESPONSE',
+      message: "We couldn't generate your lesson this time. Please try again.",
+      statusCode: 502,
+      retryable: true,
+    });
+  }
+
+  // Strip markdown code fences if present
+  let cleaned = rawText
+    .replace(/^```json\s*/im, '')
+    .replace(/^```\s*/im, '')
+    .replace(/\s*```$/im, '')
+    .trim();
+
+  // Find outermost JSON object
+  const startIdx = cleaned.indexOf('{');
+  const endIdx = cleaned.lastIndexOf('}');
+  if (startIdx !== -1 && endIdx > startIdx) {
+    cleaned = cleaned.slice(startIdx, endIdx + 1);
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (parseErr) {
+    throw new AppError({
+      code: 'INVALID_AI_RESPONSE',
+      message: "We couldn't generate your lesson this time. Please try again.",
+      statusCode: 502,
+      retryable: true,
+      cause: parseErr,
+    });
+  }
+
+  const validated = validator(parsed);
+  if (!validated) {
+    throw new AppError({
+      code: 'INVALID_AI_RESPONSE',
+      message: "We couldn't generate your lesson this time. Please try again.",
+      statusCode: 502,
+      retryable: true,
+    });
+  }
+
+  return validated;
+}
+
+/**
  * Verify Gemini connection and model availability
  */
 export async function verifyGeminiConnection(
@@ -61,7 +123,7 @@ export async function verifyGeminiConnection(
     return {
       ok: false,
       model: effectiveModel,
-      message: 'GEMINI_API_KEY is not set or is using a placeholder.',
+      message: 'GEMINI_API_KEY is not configured.',
     };
   }
 
@@ -83,10 +145,11 @@ export async function verifyGeminiConnection(
       message: reply || 'Connected successfully to Gemini model.',
     };
   } catch (err: any) {
+    const classified = classifyError(err);
     return {
       ok: false,
       model: effectiveModel,
-      message: `Gemini API connection error: ${err?.message || 'Unknown error'}`,
+      message: classified.safeMessage,
     };
   }
 }
@@ -155,9 +218,22 @@ Pedagogical and voice guidelines:
         maxOutputTokens: 110,
       },
     });
+
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason === 'SAFETY') {
+      throw new AppError({
+        code: 'SAFETY_BLOCKED',
+        message: 'The request was flagged by content safety guidelines. Please rephrase and try again.',
+        statusCode: 400,
+        retryable: false,
+      });
+    }
+
     reply = response.text?.trim() || '';
   } catch (err: any) {
-    // If primary model hits temporary 503 or 404, fallback to gemini-3.8-flash
+    if (err instanceof AppError) throw err;
+
+    // If primary model hits temporary 503 or capacity, fallback to gemini-3.8-flash
     if (usedModel !== 'gemini-3.8-flash') {
       try {
         usedModel = 'gemini-3.8-flash';
@@ -170,12 +246,24 @@ Pedagogical and voice guidelines:
             maxOutputTokens: 110,
           },
         });
+
+        const fallbackCandidate = fallbackRes.candidates?.[0];
+        if (fallbackCandidate?.finishReason === 'SAFETY') {
+          throw new AppError({
+            code: 'SAFETY_BLOCKED',
+            message: 'The request was flagged by content safety guidelines. Please rephrase and try again.',
+            statusCode: 400,
+            retryable: false,
+          });
+        }
+
         reply = fallbackRes.text?.trim() || '';
-      } catch (fallbackErr) {
-        throw err;
+      } catch (fallbackErr: any) {
+        if (fallbackErr instanceof AppError) throw fallbackErr;
+        throw classifyError(fallbackErr);
       }
     } else {
-      throw err;
+      throw classifyError(err);
     }
   }
 
@@ -206,7 +294,6 @@ export async function evaluateStudentAnswer(
     };
   }
 
-  // Check unintelligible / single noise words
   if (trimmed.length < 3) {
     return {
       verdict: 'ambiguous',
@@ -251,30 +338,43 @@ Respond ONLY with a valid JSON object matching this schema, with no markdown cod
       },
     });
 
-    const raw = response.text?.trim() || '{}';
-    // Clean potential markdown blocks if returned
-    const cleanJson = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const parsed = JSON.parse(cleanJson);
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason === 'SAFETY') {
+      throw new AppError({
+        code: 'SAFETY_BLOCKED',
+        message: 'The submission was flagged by content safety guidelines. Please try a different sentence.',
+        statusCode: 400,
+        retryable: false,
+      });
+    }
 
-    return {
-      verdict: parsed.verdict || 'partially_correct',
-      score: typeof parsed.score === 'number' ? Math.min(100, Math.max(0, parsed.score)) : 70,
-      feedback: parsed.feedback || `Good effort with "${targetWord}"!`,
-      wordUsedCorrectly: Boolean(parsed.wordUsedCorrectly),
-      grammarFeedback: parsed.grammarFeedback || undefined,
-      betterExpression: parsed.betterExpression || undefined,
-    };
+    const raw = response.text?.trim() || '';
+    return extractAndValidateJson<SentenceEvaluation>(raw, (parsed) => {
+      if (!parsed || typeof parsed !== 'object') return null;
+
+      const validVerdicts = ['correct', 'partially_correct', 'incorrect', 'ambiguous', 'empty'];
+      const verdict = validVerdicts.includes(parsed.verdict) ? parsed.verdict : 'partially_correct';
+      const score =
+        typeof parsed.score === 'number' && !isNaN(parsed.score)
+          ? Math.min(100, Math.max(0, parsed.score))
+          : 70;
+      const feedback =
+        typeof parsed.feedback === 'string' && parsed.feedback.trim()
+          ? parsed.feedback.trim()
+          : `Good effort practicing with "${targetWord}"!`;
+
+      return {
+        verdict,
+        score,
+        feedback,
+        wordUsedCorrectly: Boolean(parsed.wordUsedCorrectly),
+        grammarFeedback: typeof parsed.grammarFeedback === 'string' ? parsed.grammarFeedback : undefined,
+        betterExpression: typeof parsed.betterExpression === 'string' ? parsed.betterExpression : undefined,
+      };
+    });
   } catch (err: any) {
-    // If JSON parsing or Gemini call fails, provide graceful fallback evaluation
-    const containsWord = trimmed.toLowerCase().includes(targetWord.toLowerCase());
-    return {
-      verdict: containsWord ? 'partially_correct' : 'incorrect',
-      score: containsWord ? 70 : 40,
-      feedback: containsWord
-        ? `You used "${targetWord}" in your sentence! Keep practicing to build confidence.`
-        : `Make sure to include the word "${targetWord}" in your sentence.`,
-      wordUsedCorrectly: containsWord,
-    };
+    if (err instanceof AppError) throw err;
+    throw classifyError(err);
   }
 }
 
@@ -289,9 +389,10 @@ export async function generateVocabularyQuiz(
 ): Promise<DynamicQuiz> {
   const effectiveKey = apiKey || config.geminiApiKey;
   const effectiveModel = model || config.geminiModel;
-  const ai = getAiClient(effectiveKey);
 
-  const prompt = `Create a high-quality ${type} vocabulary quiz question for the English word "${word.word}" (${word.partOfSpeech}, level: ${word.level}).
+  try {
+    const ai = getAiClient(effectiveKey);
+    const prompt = `Create a high-quality ${type} vocabulary quiz question for the English word "${word.word}" (${word.partOfSpeech}, level: ${word.level}).
 Definition: ${word.definition}
 Example: ${word.exampleSentence}
 
@@ -305,7 +406,6 @@ Return ONLY a valid JSON object matching this format without backticks or markdo
   "targetWord": "${word.word}"
 }`;
 
-  try {
     const response = await ai.models.generateContent({
       model: effectiveModel,
       contents: prompt,
@@ -315,22 +415,35 @@ Return ONLY a valid JSON object matching this format without backticks or markdo
       },
     });
 
-    const raw = response.text?.trim() || '{}';
-    const cleanJson = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
-    const parsed = JSON.parse(cleanJson);
+    const raw = response.text?.trim() || '';
+    const dynamicQuiz = extractAndValidateJson<DynamicQuiz | null>(raw, (parsed) => {
+      if (
+        parsed &&
+        typeof parsed.question === 'string' &&
+        Array.isArray(parsed.options) &&
+        parsed.options.length >= 2 &&
+        typeof parsed.correctAnswer === 'string'
+      ) {
+        return {
+          question: parsed.question,
+          type,
+          options: parsed.options,
+          correctAnswer: parsed.correctAnswer,
+          explanation:
+            typeof parsed.explanation === 'string'
+              ? parsed.explanation
+              : `"${word.word}" means ${word.definition}.`,
+          targetWord: word.word,
+        };
+      }
+      return null;
+    });
 
-    if (Array.isArray(parsed.options) && parsed.options.length >= 2 && parsed.correctAnswer) {
-      return {
-        question: parsed.question,
-        type,
-        options: parsed.options,
-        correctAnswer: parsed.correctAnswer,
-        explanation: parsed.explanation,
-        targetWord: word.word,
-      };
+    if (dynamicQuiz) {
+      return dynamicQuiz;
     }
   } catch {
-    // Fall back to vocabulary item data if Gemini response parsing fails
+    // If Gemini fails or returns malformed response, fall back to high quality curated dictionary question
   }
 
   // Pre-curated fallback question based on word data

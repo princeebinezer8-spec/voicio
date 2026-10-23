@@ -56,18 +56,18 @@ export const Header: React.FC<HeaderProps> = ({
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
             isGeminiConnected
               ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-              : 'bg-amber-50 text-amber-700 border-amber-200'
+              : 'bg-indigo-50 text-indigo-700 border-indigo-200'
           }`}
-          title={isGeminiConnected ? 'Gemini AI Connected' : 'Running in offline demonstration mode'}
+          title={isGeminiConnected ? 'Gemini AI Connected' : 'Voicio AI Vocabulary Assistant'}
         >
           <span
             className={`w-1.5 h-1.5 rounded-full ${
-              isGeminiConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              isGeminiConnected ? 'bg-emerald-500 animate-pulse' : 'bg-indigo-500'
             }`}
           />
           <Sparkles className="w-3 h-3 text-indigo-600 hidden sm:inline" />
           <span className="hidden sm:inline font-semibold">
-            {isGeminiConnected ? 'Gemini AI' : 'Preview'}
+            {isGeminiConnected ? 'Gemini AI' : 'Voicio AI'}
           </span>
           <span className="text-[11px] opacity-80">({selectedLevel})</span>
         </div>

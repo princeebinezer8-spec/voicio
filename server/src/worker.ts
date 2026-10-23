@@ -17,6 +17,8 @@ import {
   getAiClient,
   TutorContext,
 } from './gemini.js';
+import { AppError, formatErrorResponse, logSafeError } from './errors.js';
+import { resolveTargetWord } from './targetWordManager.js';
 
 export interface Bindings {
   GEMINI_API_KEY?: string;
@@ -61,27 +63,9 @@ app.use('*', async (c, next) => {
 
 // Centralized error handler
 app.onError((err, c) => {
-  console.error('Worker API Error:', err);
-  const status = (err as any).status || (err as any).statusCode || 500;
-  let message = err.message || 'Internal server error';
-
-  if (err?.message?.includes('API_KEY_INVALID') || status === 400) {
-    message = 'Invalid Gemini API Key. Please verify your GEMINI_API_KEY in Cloudflare Worker secrets.';
-  } else if (err?.message?.includes('RESOURCE_EXHAUSTED') || status === 429) {
-    message = 'Gemini API free tier rate limit or quota reached. Please wait a few moments before trying again.';
-  } else if (err?.message?.includes('NOT_FOUND') || status === 404) {
-    message = 'The configured Gemini model is not accessible. Please check GEMINI_MODEL.';
-  }
-
-  return c.json(
-    {
-      success: false,
-      error: err.name || 'Error',
-      message,
-      statusCode: status,
-    },
-    (status >= 400 && status <= 599 ? status : 500) as any
-  );
+  logSafeError(`Worker ${c.req.method} ${c.req.path}`, err);
+  const formatted = formatErrorResponse(err);
+  return c.json(formatted, formatted.statusCode as any);
 });
 
 // 1. GET /api/health
@@ -240,37 +224,42 @@ app.post('/api/chat', async (c) => {
   const isConfigured = Boolean(apiKey && apiKey.length > 5 && !apiKey.includes('your_'));
 
   if (!message || typeof message !== 'string' || !message.trim()) {
-    return c.json(
-      {
-        success: false,
-        error: 'Bad Request',
-        message: 'Message cannot be empty.',
-      },
-      400
-    );
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      message: 'Message cannot be empty.',
+      statusCode: 400,
+      retryable: false,
+    });
   }
 
   const typedLevel = (['Beginner', 'Intermediate', 'Advanced'].includes(level)
     ? level
     : 'Intermediate') as DifficultyLevel;
 
-  let activeWord: VocabularyWord | undefined = currentWord;
-  if (!activeWord) {
-    const words = message.match(/\b[A-Za-z]+\b/g) || [];
-    for (const w of words) {
-      const found = getWordByName(w);
-      if (found) {
-        activeWord = found;
-        break;
-      }
-    }
-    if (!activeWord) {
-      activeWord = getRandomWordForLevel(typedLevel);
-    }
+  // Dynamically resolve target word from the student's latest utterance
+  const resolution = resolveTargetWord(message.trim(), currentWord, typedLevel);
+  const activeWord = resolution.activeWord;
+
+  // Handle clarification turn if user wants to switch but didn't specify which word
+  if (resolution.type === 'CLARIFICATION' && resolution.clarificationQuestion) {
+    const suggestedPrompts = [
+      `Teach me another ${typedLevel.toLowerCase()} word.`,
+      `Give me another example with "${activeWord.word}".`,
+      `How do I pronounce "${activeWord.word}"?`,
+      `Quiz me on "${activeWord.word}".`,
+    ];
+
+    return c.json({
+      success: true,
+      reply: resolution.clarificationQuestion,
+      model: 'voicio-clarification',
+      activeWord,
+      suggestedPrompts,
+    });
   }
 
   if (!isConfigured || !apiKey) {
-    const fallbackReply = `Hello! I am Voicio, your vocabulary coach. To activate live AI conversational responses with Gemini, please set your GEMINI_API_KEY in Cloudflare Worker secrets. Today's practice word is "${activeWord.word}" (${activeWord.partOfSpeech}) — "${activeWord.definition}". Would you like to try using "${activeWord.word}" in a sentence?`;
+    const fallbackReply = `Hello! I am Voicio, your vocabulary coach. Today's practice word is "${activeWord.word}" (${activeWord.partOfSpeech}) — "${activeWord.definition}". Would you like to try using "${activeWord.word}" in a sentence?`;
     return c.json({
       success: true,
       reply: fallbackReply,
@@ -278,7 +267,7 @@ app.post('/api/chat', async (c) => {
       activeWord,
       suggestedPrompts: [
         `How do I pronounce ${activeWord.word}?`,
-        `Give me another example of ${activeWord.word}.`,
+        `Give me an example of ${activeWord.word}.`,
         `Can I use ${activeWord.word} in a sentence?`,
         `Quiz me on ${activeWord.word}.`,
       ],
@@ -289,6 +278,9 @@ app.post('/api/chat', async (c) => {
     level: typedLevel,
     currentWord: activeWord,
     history: Array.isArray(history) ? history : [],
+    previousWord: resolution.previousWord,
+    comparisonWord: resolution.comparisonWord,
+    transitionType: resolution.type,
   };
 
   const { reply, model: usedModel } = await generateTutorReply(
@@ -327,15 +319,13 @@ app.post('/api/evaluate', async (c) => {
   const model = c.env.GEMINI_MODEL?.trim() || 'gemini-flash-lite-latest';
   const isConfigured = Boolean(apiKey && apiKey.length > 5 && !apiKey.includes('your_'));
 
-  if (!word || typeof word !== 'string') {
-    return c.json(
-      {
-        success: false,
-        error: 'Bad Request',
-        message: 'Word parameter is required.',
-      },
-      400
-    );
+  if (!word || typeof word !== 'string' || !word.trim()) {
+    throw new AppError({
+      code: 'VALIDATION_ERROR',
+      message: 'Word parameter is required.',
+      statusCode: 400,
+      retryable: false,
+    });
   }
 
   const answer = typeof userAnswer === 'string' ? userAnswer : '';
@@ -467,14 +457,14 @@ app.post('/api/quiz', async (c) => {
 
 // Fallback 404 for unknown endpoints
 app.all('*', (c) => {
-  return c.json(
-    {
-      success: false,
-      error: 'Not Found',
-      message: `API endpoint ${c.req.url} not found.`,
-    },
-    404
-  );
+  const notFound = new AppError({
+    code: 'NOT_FOUND',
+    message: `API endpoint ${c.req.url} not found.`,
+    statusCode: 404,
+    retryable: false,
+  });
+  const formatted = formatErrorResponse(notFound);
+  return c.json(formatted, 404);
 });
 
 export default app;

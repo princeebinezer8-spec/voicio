@@ -11,6 +11,7 @@ import quizRouter from './routes/quiz.js';
 import wordRouter from './routes/word.js';
 import { basicRateLimiter } from './middleware/rateLimit.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { AppError } from './errors.js';
 
 const clientDistPath = fs.existsSync(path.resolve(process.cwd(), '../client/dist'))
   ? path.resolve(process.cwd(), '../client/dist')
@@ -59,12 +60,15 @@ app.use('/api', quizRouter);
 app.use('/api', wordRouter);
 
 // Fallback 404 for unknown API endpoints
-app.use('/api/*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Not Found',
-    message: `API endpoint ${req.originalUrl} not found.`,
-  });
+app.use('/api/*', (req, res, next) => {
+  next(
+    new AppError({
+      code: 'NOT_FOUND',
+      message: `API endpoint ${req.originalUrl} not found.`,
+      statusCode: 404,
+      retryable: false,
+    })
+  );
 });
 
 // Serve frontend static build if present

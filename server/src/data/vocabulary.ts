@@ -250,7 +250,38 @@ export const VOCABULARY_LIST: VocabularyWord[] = [
     antonyms: ['obtuse', 'unperceptive', 'dull-witted'],
     category: 'Intellect & Insight',
     quickTip: 'Related noun: "perspicacity". Don’t confuse with "perspicuous" (which means clear to understand).'
-  }
+  },
+  {
+    id: 'int-6',
+    word: 'Thorough',
+    level: 'Intermediate',
+    partOfSpeech: 'adjective',
+    phonetic: '/ˈθʌr.ə/ (UK) /ˈθɝː.oʊ/ (US)',
+    pronunciationGuide: 'THUR-oh',
+    definition: 'Complete with regard to every detail; not superficial or partial.',
+    simpleExplanation: 'Doing something thoroughly means doing it completely and leaving nothing out.',
+    exampleSentence: 'The team conducted a thorough review of the project before launch.',
+    synonyms: ['comprehensive', 'in-depth', 'meticulous', 'exhaustive'],
+    antonyms: ['cursory', 'superficial', 'incomplete'],
+    category: 'Work & Execution',
+    quickTip: 'Spelling tip: "through", "thorough", and "thought" have very different sounds.'
+  },
+  {
+    id: 'adv-6',
+    word: 'Meticulous',
+    level: 'Advanced',
+    partOfSpeech: 'adjective',
+    phonetic: '/məˈtɪk.jə.ləs/',
+    pronunciationGuide: 'muh-TIK-yuh-luhs',
+    definition: 'Showing great attention to detail; very careful, thorough, and precise.',
+    simpleExplanation: 'A meticulous person pays attention to every tiny detail to make sure everything is completely correct.',
+    exampleSentence: 'She was meticulous about documenting every step of the research experiment.',
+    synonyms: ['thorough', 'diligent', 'scrupulous', 'painstaking'],
+    antonyms: ['careless', 'sloppy', 'negligent'],
+    category: 'Precision & Excellence',
+    commonMistake: 'Don’t confuse with "perfectionist" (a noun). Meticulous is an adjective describing careful behavior.',
+    quickTip: 'You can say "meticulous about" or "meticulous in" doing something.'
+  },
 ];
 
 export function getWordsByLevel(level: DifficultyLevel): VocabularyWord[] {
@@ -272,4 +303,29 @@ export function getRandomWordForLevel(level: DifficultyLevel, excludeIds: string
     return allForLevel[Math.floor(Math.random() * allForLevel.length)];
   }
   return words[Math.floor(Math.random() * words.length)];
+}
+
+export function findOrCreateVocabularyWord(name: string, level: DifficultyLevel = 'Intermediate'): VocabularyWord {
+  const cleaned = name.trim().toLowerCase();
+  const found = VOCABULARY_LIST.find((w) => w.word.toLowerCase() === cleaned);
+  if (found) {
+    return found;
+  }
+
+  const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  return {
+    id: `dynamic-${cleaned}`,
+    word: capitalized,
+    level,
+    partOfSpeech: 'vocabulary word',
+    phonetic: `/${cleaned}/`,
+    pronunciationGuide: capitalized,
+    definition: `The English vocabulary word "${capitalized}".`,
+    simpleExplanation: `Used in English to express "${capitalized}".`,
+    exampleSentence: `Learning how to use "${capitalized}" naturally in everyday English.`,
+    synonyms: [],
+    antonyms: [],
+    category: 'General Vocabulary',
+    quickTip: `Practice constructing an original sentence with "${capitalized}".`,
+  };
 }

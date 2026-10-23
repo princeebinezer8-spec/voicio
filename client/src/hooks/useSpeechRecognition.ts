@@ -26,6 +26,7 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
   const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
+  const hasDispatchedRef = useRef<boolean>(false);
   const isSupported = typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   useEffect(() => {
@@ -67,23 +68,25 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
         const cleaned = finalStr.trim();
         setTranscript(cleaned);
         setInterimTranscript('');
-        if (onFinalResult) {
+        if (cleaned && onFinalResult && !hasDispatchedRef.current) {
+          hasDispatchedRef.current = true;
           onFinalResult(cleaned);
         }
       }
     };
 
     recognition.onerror = (event: any) => {
-      let errorMsg = 'Speech recognition error.';
+      let errorMsg = 'Something went wrong. Please try again.';
       switch (event.error) {
         case 'not-allowed':
-          errorMsg = 'Microphone permission denied. Please allow microphone access in your browser settings to speak.';
+        case 'service-not-allowed':
+          errorMsg = "We couldn't access your microphone. Please check your browser permissions and try again.";
           break;
         case 'no-speech':
-          errorMsg = 'No speech detected. Please check your microphone and speak clearly.';
+          errorMsg = 'No speech was detected. Please check your microphone and speak clearly.';
           break;
         case 'network':
-          errorMsg = 'Network error during speech recognition. Please check your internet connection.';
+          errorMsg = "We're having trouble connecting. Check your internet connection and try again.";
           break;
         case 'audio-capture':
           errorMsg = 'No microphone device was detected on your computer.';
@@ -92,10 +95,11 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
           // User clicked stop or cancelled - not a real error
           return;
         default:
-          errorMsg = `Voice error: ${event.error || 'Unable to recognize speech'}`;
+          errorMsg = 'Something went wrong. Please try again.';
       }
       setError(errorMsg);
       setIsListening(false);
+      hasDispatchedRef.current = false;
     };
 
     recognition.onend = () => {
@@ -105,32 +109,31 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
     recognitionRef.current = recognition;
 
     return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch {
-          // ignore cleanup abort
-        }
+      try {
+        recognition.abort();
+      } catch {
+        // ignore
       }
     };
   }, [isSupported, onFinalResult]);
 
   const startListening = useCallback(async (): Promise<boolean> => {
     if (!isSupported) {
-      setError('Your browser does not support Web Speech Recognition. Please use Chrome, Edge, or Safari, or use text input.');
+      setError('Speech recognition is not supported in this browser. You can type freely instead!');
       return false;
     }
 
-    // Check microphone permission explicitly via mediaDevices if available
+    hasDispatchedRef.current = false;
+
+    // Check mediaDevices permission proactively if supported
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Close test stream immediately
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
       }
     } catch (permErr: any) {
       if (permErr.name === 'NotAllowedError' || permErr.name === 'PermissionDeniedError') {
-        setError('Microphone permission was denied. Please grant microphone access in your browser address bar.');
+        setError("We couldn't access your microphone. Please check your browser permissions and try again.");
         return false;
       }
     }
@@ -142,13 +145,12 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
       recognitionRef.current?.start();
       return true;
     } catch (e: any) {
-      // If recognition was already running, restart it
       try {
         recognitionRef.current?.stop();
         setTimeout(() => recognitionRef.current?.start(), 150);
         return true;
       } catch {
-        setError('Could not start microphone. Please try again.');
+        setError('Something went wrong. Please try again.');
         return false;
       }
     }
@@ -160,9 +162,10 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
     } catch {
       // ignore
     }
-    // If user manually stopped and there was interim speech captured, send it immediately
-    if (interimTranscript && interimTranscript.trim() && onFinalResult) {
+
+    if (interimTranscript && interimTranscript.trim() && onFinalResult && !hasDispatchedRef.current) {
       const textToSend = interimTranscript.trim();
+      hasDispatchedRef.current = true;
       setTranscript(textToSend);
       setInterimTranscript('');
       onFinalResult(textToSend);
@@ -174,6 +177,7 @@ export function useSpeechRecognition(onFinalResult?: (result: string) => void): 
     setTranscript('');
     setInterimTranscript('');
     setError(null);
+    hasDispatchedRef.current = false;
   }, []);
 
   return {

@@ -1,17 +1,19 @@
 import React from 'react';
-import { Volume2, VolumeX, AlertTriangle, Sparkles, User } from 'lucide-react';
+import { Volume2, AlertTriangle, Sparkles, User, RotateCcw } from 'lucide-react';
 import { ChatMessage } from '../../types';
 
 interface ChatBubbleProps {
   message: ChatMessage;
   onSpeak?: (text: string) => void;
   isSpeakingThis?: boolean;
+  onRetry?: () => void;
 }
 
 export const ChatBubble: React.FC<ChatBubbleProps> = ({
   message,
   onSpeak,
   isSpeakingThis = false,
+  onRetry,
 }) => {
   const isModel = message.role === 'model';
 
@@ -23,8 +25,18 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
     >
       {/* Tutor Avatar */}
       {isModel && (
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center text-white flex-shrink-0 shadow-sm mt-1">
-          <Sparkles className="w-4 h-4 text-white" />
+        <div
+          className={`w-9 h-9 rounded-xl flex items-center justify-center text-white flex-shrink-0 shadow-sm mt-1 ${
+            message.error
+              ? 'bg-gradient-to-tr from-rose-500 to-amber-500'
+              : 'bg-gradient-to-tr from-indigo-600 to-violet-600'
+          }`}
+        >
+          {message.error ? (
+            <AlertTriangle className="w-4 h-4 text-white" />
+          ) : (
+            <Sparkles className="w-4 h-4 text-white" />
+          )}
         </div>
       )}
 
@@ -39,8 +51,16 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
       >
         {/* Header line for Tutor */}
         {isModel && (
-          <div className="flex items-center justify-between gap-3 mb-1.5 pb-1 border-b border-slate-100">
-            <span className="text-xs font-semibold text-indigo-700 tracking-wide uppercase">
+          <div
+            className={`flex items-center justify-between gap-3 mb-1.5 pb-1 border-b ${
+              message.error ? 'border-rose-200/60' : 'border-slate-100'
+            }`}
+          >
+            <span
+              className={`text-xs font-semibold tracking-wide uppercase ${
+                message.error ? 'text-rose-700' : 'text-indigo-700'
+              }`}
+            >
               Voicio Tutor
             </span>
             {onSpeak && !message.error && (
@@ -76,10 +96,25 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
           {message.text}
         </p>
 
+        {/* Optional Retry Button for Retryable Errors */}
+        {message.error && message.retryable !== false && onRetry && (
+          <div className="mt-2.5 pt-2 border-t border-rose-200/60 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-rose-700 font-medium">Temporary issue</span>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-900 text-xs font-semibold transition-all active:scale-95 cursor-pointer shadow-2xs"
+            >
+              <RotateCcw className="w-3 h-3 text-rose-700" />
+              <span>Try again</span>
+            </button>
+          </div>
+        )}
+
         {/* Footer timestamp */}
         <div
           className={`flex items-center justify-end gap-1 mt-1.5 text-[11px] ${
-            isModel ? 'text-slate-400' : 'text-indigo-200'
+            isModel ? (message.error ? 'text-rose-400' : 'text-slate-400') : 'text-indigo-200'
           }`}
         >
           {message.error && <AlertTriangle className="w-3 h-3 text-rose-500" />}

@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { evaluateStudentAnswer } from '../gemini.js';
 import { config } from '../config.js';
+import { AppError } from '../errors.js';
 import { DifficultyLevel } from '../data/vocabulary.js';
 
 const router = Router();
@@ -14,13 +15,13 @@ router.post('/evaluate', async (req: Request, res: Response, next: NextFunction)
       taskDescription = 'Use the word naturally in a sentence',
     } = req.body;
 
-    if (!word || typeof word !== 'string') {
-      res.status(400).json({
-        success: false,
-        error: 'Bad Request',
+    if (!word || typeof word !== 'string' || !word.trim()) {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
         message: 'Word parameter is required.',
+        statusCode: 400,
+        retryable: false,
       });
-      return;
     }
 
     const answer = typeof userAnswer === 'string' ? userAnswer : '';

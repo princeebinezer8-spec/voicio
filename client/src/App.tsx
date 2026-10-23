@@ -11,7 +11,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { useLearningProgress } from './hooks/useLearningProgress';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis';
-import { fetchWords, fetchHealth, fetchConfig, sendChatMessage, HealthResponse } from './services/api';
+import { fetchWords, fetchHealth, fetchConfig, sendChatMessage, mapErrorToUserMessage, HealthResponse } from './services/api';
 import { VocabularyWord, ChatMessage, MicState } from './types';
 
 export const App: React.FC = () => {
@@ -136,6 +136,8 @@ export const App: React.FC = () => {
         if (response.activeWord) {
           setActiveTutorWord(response.activeWord);
           recordWordEncountered(response.activeWord.id, response.activeWord.word);
+          const matchingIndex = allWords.findIndex((w) => w.word.toLowerCase() === response.activeWord.word.toLowerCase());
+          if (matchingIndex !== -1) { setCurrentWordIndex(matchingIndex); } else { setAllWords((prev) => [...prev, response.activeWord]); }
         }
 
         // Auto read aloud if enabled
@@ -144,12 +146,15 @@ export const App: React.FC = () => {
         }
       } catch (err: any) {
         console.error('Chat error:', err);
+        const mapped = mapErrorToUserMessage(err);
         const errorMsg: ChatMessage = {
           id: `tutor-err-${Date.now()}`,
           role: 'model',
-          text: err.message || 'I had a momentary connection hiccup. Please try asking again!',
+          text: mapped.message,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           error: true,
+          retryable: mapped.retryable,
+          errorCode: mapped.code,
         };
         setChatMessages((prev) => [...prev, errorMsg]);
       }
@@ -166,6 +171,17 @@ export const App: React.FC = () => {
     ]
   );
 
+  // Retry last attempted user message
+  const handleRetryLastMessage = useCallback(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i].role === 'user') {
+        const textToRetry = chatMessages[i].text;
+        setChatMessages((prev) => prev.filter((m) => !m.error));
+        handleSendMessage(textToRetry);
+        break;
+      }
+    }
+  }, [chatMessages, handleSendMessage]);
   // Web Speech Recognition Hook
   const [isProcessingVoice, setIsProcessingVoice] = useState(false);
 
@@ -341,6 +357,7 @@ export const App: React.FC = () => {
               suggestedPrompts={suggestedPrompts}
               onChangeWord={handleSelectWordForTutor}
               allWords={allWords}
+              onRetryLastMessage={handleRetryLastMessage}
             />
           )}
 

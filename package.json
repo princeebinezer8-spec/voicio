@@ -10,6 +10,7 @@
     "build:server": "npm run build --prefix server",
     "build:client": "npm run build --prefix client",
     "build": "npm run build:server && npm run build:client",
+    "test": "npx tsx --test server/tests/targetWordSwitching.test.ts server/tests/errorHandling.test.ts client/tests/apiErrorMapping.test.ts",
     "start": "npm run start --prefix server"
   },
   "devDependencies": {

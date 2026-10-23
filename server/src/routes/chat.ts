@@ -1,12 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { generateTutorReply, ChatMessage, TutorContext } from '../gemini.js';
 import { config } from '../config.js';
-import {
-  DifficultyLevel,
-  getWordByName,
-  getRandomWordForLevel,
-  VocabularyWord
-} from '../data/vocabulary.js';
+import { AppError } from '../errors.js';
+import { DifficultyLevel, VocabularyWord } from '../data/vocabulary.js';
+import { resolveTargetWord } from '../targetWordManager.js';
 
 const router = Router();
 
@@ -21,39 +18,45 @@ router.post('/chat', async (req: Request, res: Response, next: NextFunction): Pr
     } = req.body;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
-      res.status(400).json({
-        success: false,
-        error: 'Bad Request',
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
         message: 'Message cannot be empty.',
+        statusCode: 400,
+        retryable: false,
       });
-      return;
     }
 
     const typedLevel = (['Beginner', 'Intermediate', 'Advanced'].includes(level)
       ? level
       : 'Intermediate') as DifficultyLevel;
 
-    // Resolve or find word if user specifically asked about a word
-    let activeWord: VocabularyWord | undefined = currentWord;
-    if (!activeWord) {
-      // Try finding if the user mentioned a known word
-      const words = message.match(/\b[A-Za-z]+\b/g) || [];
-      for (const w of words) {
-        const found = getWordByName(w);
-        if (found) {
-          activeWord = found;
-          break;
-        }
-      }
-      if (!activeWord) {
-        activeWord = getRandomWordForLevel(typedLevel);
-      }
+    // Dynamically resolve target word from the student's latest utterance
+    const resolution = resolveTargetWord(message.trim(), currentWord, typedLevel);
+    const activeWord = resolution.activeWord;
+
+    // Handle clarification turn if user wants to switch but didn't specify which word
+    if (resolution.type === 'CLARIFICATION' && resolution.clarificationQuestion) {
+      const suggestedPrompts = [
+        `Teach me another ${typedLevel.toLowerCase()} word.`,
+        `Give me another example with "${activeWord.word}".`,
+        `How do I pronounce "${activeWord.word}"?`,
+        `Quiz me on "${activeWord.word}".`,
+      ];
+
+      res.json({
+        success: true,
+        reply: resolution.clarificationQuestion,
+        model: 'voicio-clarification',
+        activeWord,
+        suggestedPrompts,
+      });
+      return;
     }
 
-    // If Gemini is not configured, give a polite, instructive fallback instead of failing silently
+    // If Gemini is not configured, give a polite, instructive fallback
     if (!config.isGeminiConfigured) {
-      const fallbackReply = `Hello! I am Voicio, your vocabulary coach. To activate live AI conversational responses with Gemini, please set your GEMINI_API_KEY in the server .env file. Today's practice word is "${activeWord.word}" (${activeWord.partOfSpeech}) — "${activeWord.definition}". Would you like to try using "${activeWord.word}" in a sentence?`;
-      
+      const fallbackReply = `Hello! I am Voicio, your vocabulary coach. To activate live AI conversational responses with Gemini, please set your GEMINI_API_KEY in the server configuration. Today's practice word is "${activeWord.word}" (${activeWord.partOfSpeech}) — "${activeWord.definition}". Would you like to try using "${activeWord.word}" in a sentence?`;
+
       res.json({
         success: true,
         reply: fallbackReply,
@@ -61,7 +64,7 @@ router.post('/chat', async (req: Request, res: Response, next: NextFunction): Pr
         activeWord,
         suggestedPrompts: [
           `How do I pronounce ${activeWord.word}?`,
-          `Give me another example of ${activeWord.word}.`,
+          `Give me an example of ${activeWord.word}.`,
           `Can I use ${activeWord.word} in a sentence?`,
           `Quiz me on ${activeWord.word}.`,
         ],
@@ -73,11 +76,14 @@ router.post('/chat', async (req: Request, res: Response, next: NextFunction): Pr
       level: typedLevel,
       currentWord: activeWord,
       history: Array.isArray(history) ? history : [],
+      previousWord: resolution.previousWord,
+      comparisonWord: resolution.comparisonWord,
+      transitionType: resolution.type,
     };
 
     const { reply, model } = await generateTutorReply(message.trim(), context);
 
-    // Compute dynamic suggested prompts based on the conversation
+    // Compute dynamic suggested prompts based on the NEW active target word
     const suggestedPrompts = [
       `Give me another example with "${activeWord.word}".`,
       `How do I pronounce "${activeWord.word}"?`,

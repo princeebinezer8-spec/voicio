@@ -20,7 +20,7 @@ import {
   DynamicQuiz,
   SentenceEvaluation,
 } from '../types';
-import { fetchQuiz, evaluateAnswer } from '../services/api';
+import { fetchQuiz, evaluateAnswer, mapErrorToUserMessage } from '../services/api';
 import { Badge } from '../components/Common/Badge';
 
 interface PractisePageProps {

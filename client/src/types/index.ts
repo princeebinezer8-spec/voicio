@@ -24,6 +24,8 @@ export interface ChatMessage {
   timestamp: string;
   suggestedPrompts?: string[];
   error?: boolean;
+  retryable?: boolean;
+  errorCode?: string;
 }
 
 export interface SentenceEvaluation {

@@ -4,7 +4,6 @@ import {
   Sparkles,
   Volume2,
   BookOpen,
-  Info,
   AlertTriangle,
 } from 'lucide-react';
 import {
@@ -37,6 +36,7 @@ interface TutorPageProps {
   suggestedPrompts: string[];
   onChangeWord?: (word: VocabularyWord) => void;
   allWords: VocabularyWord[];
+  onRetryLastMessage?: () => void;
 }
 
 export const TutorPage: React.FC<TutorPageProps> = ({
@@ -57,6 +57,7 @@ export const TutorPage: React.FC<TutorPageProps> = ({
   suggestedPrompts,
   onChangeWord,
   allWords,
+  onRetryLastMessage,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -76,6 +77,9 @@ export const TutorPage: React.FC<TutorPageProps> = ({
     setIsSubmitting(true);
     try {
       await onSendMessage(trimmed);
+    } catch {
+      // Preserve student input if sending fails
+      setInputText(trimmed);
     } finally {
       setIsSubmitting(false);
     }
@@ -140,6 +144,11 @@ export const TutorPage: React.FC<TutorPageProps> = ({
                 }}
                 className="text-xs font-semibold py-1.5 px-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               >
+                {!allWords.some((w) => w.id === currentWord.id) && (
+                  <option value={currentWord.id}>
+                    {currentWord.word} ({currentWord.level})
+                  </option>
+                )}
                 {allWords.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.word} ({w.level})
@@ -172,13 +181,6 @@ export const TutorPage: React.FC<TutorPageProps> = ({
           </div>
         </div>
 
-        {!isGeminiConfigured && (
-          <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2 flex-shrink-0">
-            <Info className="w-4 h-4 text-amber-700 flex-shrink-0" />
-            <span className="text-xs">Offline mode active. Add GEMINI_API_KEY in server configuration for live responses.</span>
-          </div>
-        )}
-
         {/* Scrollable Conversation Transcript with generous height & padding */}
         <div className="flex-1 min-h-[280px] overflow-y-auto pr-1 space-y-3">
           {messages.map((msg) => (
@@ -187,6 +189,7 @@ export const TutorPage: React.FC<TutorPageProps> = ({
               message={msg}
               onSpeak={onSpeak}
               isSpeakingThis={currentlySpeakingText === msg.text}
+              onRetry={onRetryLastMessage}
             />
           ))}
 
